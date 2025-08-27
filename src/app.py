@@ -52,8 +52,8 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 
     def has(*names): return next((cols[n] for n in names if n in cols), None)
 
-    c_price_eur   = has("price_eur_eur", "prix_eur", "price_eur")
-    c_surface_m2 = has("surface_m2_m2", "surface_m2", "surface_m2 (m2)")
+    c_price_eur   = has("prix_eur", "price_eur")
+    c_surface_m2 = has( "surface_m2", "surface_m2 (m2)")
     c_addr    = has("address", "adresse", "location")
     c_cp      = has("postal_code", "cp", "code_postal")
     c_lat     = has("lat", "latitude", "y")
@@ -132,7 +132,7 @@ surface_m2_min, surface_m2_max = (
 
 price_eur_sel = st.sidebar.slider("Prix (€)", min_value=price_eur_min, max_value=price_eur_max,
                               value=(price_eur_min, price_eur_max), step=max(1000, (price_eur_max-price_eur_min)//100 or 1))
-surface_m2_sel = st.sidebar.slider("surface_m2 (m²)", min_value=surface_m2_min, max_value=surface_m2_max,
+surface_m2_sel = st.sidebar.slider("Surface (m²)", min_value=surface_m2_min, max_value=surface_m2_max,
                                 value=(surface_m2_min, surface_m2_max), step=1)
 
 cities = sorted([c for c in df.get("city", pd.Series([])).dropna().unique().tolist()])
