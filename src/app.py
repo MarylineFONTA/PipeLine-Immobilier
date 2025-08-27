@@ -201,8 +201,16 @@ elif do_geocode and "address" in dff:
         y, x = geocode_address(addr)  # (lat, lon)
         lat.append(y); lon.append(x)
     dff["_lat"], dff["_lon"] = lat, lon
-    st.map(dff[["_lat", "_lon"]].dropna())
-    dff = dff.drop(columns=["_lat", "_lon"], errors="ignore")
+
+    # Column renaming here
+    dff = dff.rename(columns={'_lat': 'latitude', '_lon': 'longitude'})
+
+    # Call st.map with the renamed columns
+    st.map(dff[["latitude", "longitude"]].dropna())
+    dff = dff.drop(columns=["latitude", "longitude"], errors="ignore")
+    
+    #st.map(dff[["_lat", "_lon"]].dropna())
+    #dff = dff.drop(columns=["_lat", "_lon"], errors="ignore")
 
 # Tableau
 st.markdown("### Données filtrées")
