@@ -220,6 +220,7 @@ class SeLogerSelectorsTP(scrapy.Spider):
     def parse_detail(self, response):
         item = {
             "url": response.url,
+            "ID" :None,
             "title": None,
             "price_eur": None,
             "surface_m2": None,
@@ -233,6 +234,8 @@ class SeLogerSelectorsTP(scrapy.Spider):
             "year_built": None, 
             "property_type": None,
         }
+
+        item["ID"] =int(item["url"].rsplit('/', 1)[-1].split('?', 1)[0].split('#', 1)[0].split('.', 1)[0])
 
         # -------- 1) JSON-LD (sélecteur) --------
         lds = []

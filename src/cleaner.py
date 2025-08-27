@@ -1,5 +1,5 @@
 # src/cleaner.py
-from __future__ import annotations
+#from __future__ import annotations
 
 import json
 import re
@@ -111,7 +111,7 @@ def main() -> None:
 
     # Colonnes ordonnées (1 info par colonne)
     ordered_cols = [
-        "url", "title", "postal_code", "address",
+        "url","ID", "title", "postal_code", "address",
         "rooms", "floor", "surface_m2",
         "price_eur", "price_per_m2",
         "dpe_letter", "ges_letter", "year_built",
