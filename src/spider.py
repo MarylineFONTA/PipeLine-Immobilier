@@ -51,7 +51,7 @@ def to_float_fr(s):
     except: return None
 
 def first_ld_listing(ld_objs):
-    ok = {"RealEstateListing","Apartment","House","SingleFamilyResidence","Product","Offer"}
+    ok = {"RealEstateListing","Apartment","House","SingleFamilyResidence","Product","Offer","Appartement","Maison"}
     if isinstance(ld_objs, dict): ld_objs = [ld_objs]
     for ld in ld_objs or []:
         if isinstance(ld, dict) and (ld.get("@type") in ok or "offers" in ld or "address" in ld):
@@ -130,12 +130,6 @@ def extract_dpe_and_ges_letters(response):
             m = GES_NEAR_RE.search(full)
             if m: ges = m.group(1).upper()
 
-    # Dernier secours: si une seule lettre trouvée quelque part et rien d'autre
-    if dpe is None and ges is None:
-        full = " ".join(response.css("body *::text").getall())
-        m = DPE_LETTER_RE.search(full)
-        if m: dpe = m.group(1).upper()
-
     return dpe, ges
 def _to_year_value(s):
     if s is None:
@@ -202,14 +196,14 @@ def extract_year_built(response, ld_obj=None):
     return _to_year_value(full)
 
 class SeLogerSelectorsTP(scrapy.Spider):
-    name = "seloger_selectors_tp"
+    name = "raw_data.json"
     custom_settings = {
         "ROBOTSTXT_OBEY": True,   # conforme : on visite seulement des fiches
         "DOWNLOAD_DELAY": 1.0,
         "CONCURRENT_REQUESTS": 1,
         "RETRY_ENABLED": True,
         "RETRY_TIMES": 1,
-        "FEEDS": {"data/seloger_tp.json": {"format":"json","encoding":"utf8","overwrite":True,"indent":2}},
+        "FEEDS": {"data/raw_data.json": {"format":"json","encoding":"utf8","overwrite":True,"indent":2}},
         "USER_AGENT": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
     }
 
