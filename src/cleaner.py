@@ -36,7 +36,7 @@ def read_json_records(path: Path) -> List[Dict]:
 def coerce_types(df: pd.DataFrame) -> pd.DataFrame:
     float_cols = ["price_eur", "surface_m2"]
     int_cols = ["rooms", "floor", "year_built"]
-    str_cols = ["url", "title", "address", "postal_code", "description", "dpe_letter", "ges_letter"]
+    str_cols = ["url", "title", "address", "postal_code", "description", "dpe_letter", "ges_letter","property_type"]
 
     for col in float_cols:
         if col in df.columns:
@@ -114,7 +114,7 @@ def main() -> None:
         "url","ID", "title", "postal_code", "address",
         "rooms", "floor", "surface_m2",
         "price_eur", "price_per_m2",
-        "dpe_letter", "ges_letter", "year_built",
+        "dpe_letter", "ges_letter", "year_built","property_type",
         "description"
     ]
     existing = [c for c in ordered_cols if c in df.columns]
