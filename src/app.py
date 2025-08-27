@@ -144,7 +144,14 @@ do_geocode = st.sidebar.checkbox("Géocoder les lignes sans lat/lon (Nominatim)"
                                  help="À utiliser avec parcimonie (quotas). Le résultat est mis en cache en mémoire.")
 
 # ---------- MAIN ----------
-st.title("🏠 Tableau de bord immobilier - Paris (Source : seloger.com)")
+#st.title("🏠 Tableau de bord immobilier - Paris (Source : seloger.com)")
+
+st.markdown(
+    "<h1 style='text-align:center; font-size:45px; color:#2C3E50;'>"
+    "🏠 Tableau de bord immobilier - Paris (Source : seloger.com)"
+    "</h1>",
+    unsafe_allow_html=True
+)
 
 # KPIs en haut
 left, mid, right = st.columns(3)
