@@ -230,6 +230,7 @@ class SeLogerSelectorsTP(scrapy.Spider):
             "dpe_letter": None, 
             "ges_letter": None, 
             "year_built": None, 
+            "property_type": None,
         }
 
         # -------- 1) JSON-LD (sélecteur) --------
@@ -279,6 +280,18 @@ class SeLogerSelectorsTP(scrapy.Spider):
 
             # description
             item["description"] = ld.get("description")
+
+            # ---- Type de bien ----
+            if "/appartement/" in response.url.lower():
+                item["property_type"] = "appartement"
+            elif "/maison/" in response.url.lower():
+                item["property_type"] = "maison"
+            if not item.get("property_type"):
+                ld_type = str(ld.get("@type", "")).lower()
+                if "apartment" in ld_type or "appartement" in ld_type:
+                    item["property_type"] = "appartement"
+                elif "house" in ld_type or "maison" in ld_type:
+                    item["property_type"] = "maison"
 
         # -------- 2) Fallbacks (sélecteurs + regex) --------
         # titre : og:title > h1
@@ -374,6 +387,15 @@ class SeLogerSelectorsTP(scrapy.Spider):
         # Année de construction
         if item["year_built"] is None:
             item["year_built"] = extract_year_built(response, ld_obj=ld)
+            
+    # ---- Fallback type de bien ----
+    # si toujours manquant, tente de deviner via le texte
+        if not item.get("property_type"):
+            page_text = " ".join(response.css("body *::text").getall()).lower()
+            if "appartement" in page_text:
+                item["property_type"] = "appartement"
+            elif "maison" in page_text:
+                item["property_type"] = "maison"
 
 
         yield item
