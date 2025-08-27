@@ -11,6 +11,7 @@ import numpy as np
 import pgeocode
 
 
+
 # 👉 REMPLACE l’URL ci-dessous par le lien "raw" de ton CSV sur GitHub
 GITHUB_CSV_URL = "https://raw.githubusercontent.com/<user>/<repo>/<branch>/data/seloger_tp.csv"
 

@@ -131,6 +131,7 @@ def extract_dpe_and_ges_letters(response):
             if m: ges = m.group(1).upper()
 
     return dpe, ges
+
 def _to_year_value(s):
     if s is None:
         return None
