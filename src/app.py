@@ -7,12 +7,23 @@ import streamlit as st
 import csv
 import io
 import requests
+import numpy as np
 
 # ---------- CONFIG ----------
 st.set_page_config(page_title="Immo Dashboard", layout="wide")
 
 DEFAULT_CSV_URL = "https://raw.githubusercontent.com/MarylineFONTA/PipeLine-Immobilier/refs/heads/main/data/cleaned_data.csv"
 
+PARIS_ARR_COORDS = {
+    "75001": (48.8625, 2.3369), "75002": (48.8686, 2.3412), "75003": (48.8627, 2.3601),
+    "75004": (48.8544, 2.3570), "75005": (48.8430, 2.3500), "75006": (48.8494, 2.3317),
+    "75007": (48.8567, 2.3125), "75008": (48.8748, 2.3170), "75009": (48.8761, 2.3378),
+    "75010": (48.8786, 2.3590), "75011": (48.8570, 2.3760), "75012": (48.8333, 2.4022),
+    "75013": (48.8270, 2.3550), "75014": (48.8322, 2.3230), "75015": (48.8417, 2.2986),
+    "75016": (48.8625, 2.2681), "75116": (48.8666, 2.2699),
+    "75017": (48.8850, 2.3090), "75018": (48.8920, 2.3440), "75019": (48.8890, 2.3830),
+    "75020": (48.8640, 2.3980),
+}
 
 # ---------- UTILS ----------
 @st.cache_data(show_spinner=True, ttl=600)
@@ -102,17 +113,60 @@ def extract_city(addr: str) -> str | None:
 
 @lru_cache(maxsize=2048)
 def geocode_address(addr: str) -> tuple[float | None, float | None]:
-    """Geocodage simple via Nominatim (optionnel). À activer par checkbox.
-       NB: soumis à des limites de taux; préférer géocoder hors-ligne en batch."""
+    """Géocodage Nominatim + normalisation Paris arrondissements."""
+    if not addr:
+        return (None, None)
+
     try:
         from geopy.geocoders import Nominatim
+        import time, re
+
         geolocator = Nominatim(user_agent="streamlit-immo-dashboard")
-        loc = geolocator.geocode(addr, timeout=10)
+        q = addr.strip()
+
+        # 1) Si CP déjà présent (ex: 75014), on s'en sert tel quel
+        m_cp = re.search(r"\b(\d{5})\b", q)
+        if m_cp:
+            cp = m_cp.group(1)
+            # on renforce la requête
+            q1 = f"{q}, {cp}, France"
+            loc = geolocator.geocode(q1, exactly_one=True, addressdetails=False, country_codes="fr", timeout=10)
+            if loc:
+                return (loc.latitude, loc.longitude)
+
+        # 2) Si mention "Paris xx(e/ème)" sans CP, on fabrique le CP
+        m_arr = re.search(r"paris[^0-9]*(\d{1,2})(?:er|e|ème)?", q, re.IGNORECASE)
+        if m_arr:
+            n = int(m_arr.group(1))
+            cps = []
+            if 1 <= n <= 20:
+                cps.append(f"750{n:02d}")
+                # cas particulier du 16e : parfois 75116
+                if n == 16:
+                    cps.append("75116")
+            # On tente avec les CP construits
+            for cp_try in cps:
+                q2 = f"{q}, {cp_try}, Paris, France"
+                loc = geolocator.geocode(q2, exactly_one=True, addressdetails=False, country_codes="fr", timeout=10)
+                if loc:
+                    return (loc.latitude, loc.longitude)
+                time.sleep(1)  # respecter ~1 req/s
+
+        # 3) Fallback : préciser la ville/pays
+        if "paris" in q.lower():
+            q3 = f"{q}, Paris, France"
+        else:
+            q3 = f"{q}, France"
+
+        loc = geolocator.geocode(q3, exactly_one=True, addressdetails=False, country_codes="fr", timeout=10)
         if loc:
             return (loc.latitude, loc.longitude)
+
     except Exception:
         pass
+
     return (None, None)
+
 
 # ---------- SIDEBAR ----------
 st.sidebar.header("Paramètres")
@@ -130,8 +184,17 @@ surface_m2_min, surface_m2_max = (
     int(df["surface_m2"].max()) if "surface_m2" in df and df["surface_m2"].notna().any() else 200,
 )
 
-price_eur_sel = st.sidebar.slider("Prix (€)", min_value=price_eur_min, max_value=price_eur_max,
-                              value=(price_eur_min, price_eur_max), step=max(1000, (price_eur_max-price_eur_min)//100 or 1))
+def fmt_fr(n): return f"{int(n):,}".replace(",", " ")
+
+step = int(max(1000, (price_eur_max - price_eur_min)//100 or 1))
+options = list(range(price_eur_min, price_eur_max + step, step))
+
+price_eur_sel = st.sidebar.select_slider(
+    "Prix (€)",
+    options=options,
+    value=(options[0], options[-1]),
+    format_func=lambda x: f"{fmt_fr(x)} €",
+)
 surface_m2_sel = st.sidebar.slider("Surface (m²)", min_value=surface_m2_min, max_value=surface_m2_max,
                                 value=(surface_m2_min, surface_m2_max), step=1)
 
@@ -140,16 +203,35 @@ city_sel = st.sidebar.multiselect("Ville", cities, default=[])
 
 q = st.sidebar.text_input("Recherche texte (dans l’adresse)", value="")
 
-do_geocode = st.sidebar.checkbox("Géocoder les lignes sans lat/lon (Nominatim)", value=False,
-                                 help="À utiliser avec parcimonie (quotas). Le résultat est mis en cache en mémoire.")
+do_geocode = False
+
+#do_geocode = st.sidebar
+# checkbox("Géocoder les lignes sans lat/lon (Nominatim)", value=False,
+#                                help="À utiliser avec parcimonie (quotas). Le résultat est mis en cache en mémoire.")
 
 # ---------- MAIN ----------
 #st.title("🏠 Tableau de bord immobilier - Paris (Source : seloger.com)")
+st.markdown(
+    """
+    <style>
+        /* Réduit l'espace blanc au-dessus du contenu principal */
+        .block-container {
+            padding-top: 1rem;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 st.markdown(
-    "<h1 style='text-align:center; font-size:45px; color:#2C3E50;'>"
-    "🏠 Tableau de bord immobilier - Paris (Source : seloger.com)"
-    "</h1>",
+    """
+    <h1 style='text-align:left; font-size:38px; color:#2C3E50;'>
+        🏠 Tableau de bord immobilier - Paris
+    </h1>
+    <p style='text-align:left; font-size:16px; color:gray; margin-top:-10px;'>
+        (Source : seloger.com)
+    </p>
+    """,
     unsafe_allow_html=True
 )
 
@@ -178,7 +260,7 @@ if q:
 dff = df.loc[mask].copy()
 
 # KPIs filtrés
-st.subheader("Résultats filtrés")
+st.subheader("🔎 Résultats filtrés")
 k1, k2, k3 = st.columns(3)
 k1.metric("Annonces retenues", len(dff))
 if "price_eur" in dff and len(dff):
@@ -186,41 +268,135 @@ if "price_eur" in dff and len(dff):
 if {"price_eur", "surface_m2"}.issubset(dff.columns) and len(dff):
     k3.metric("€/m² moyen (filtré)", f"{int(dff['price_per_m2'].mean(skipna=True)):,} €".replace(",", " "))
 
-# Histogramme des prix
+import numpy as np
+import altair as alt
+
+# Histogramme des prix (5 classes régulières, ordre garanti)
 if "price_eur" in dff and dff["price_eur"].notna().any():
-    st.markdown("### Histogramme des prix")
-    # bins automatiques ~ racine(n)
-    bins = max(5, int(len(dff.dropna(subset=["price_eur"])) ** 0.5))
-    hist, edges = pd.cut(dff["price_eur"], bins=bins, retbins=True, include_lowest=True)
-    chart_df = hist.value_counts().sort_index().to_frame("count")
-    chart_df.index = [f"{int(edges[i]):,} – {int(edges[i+1]):,} €".replace(",", " ") for i in range(len(edges)-1)]
-    st.bar_chart(chart_df)
+    st.markdown("### 📈 Histogramme des prix (5 classes)")
+    s = dff["price_eur"].dropna()
 
-# Carte (si lat/lon)
-if {"lat", "lon"}.issubset(dff.columns) and dff[["lat","lon"]].notna().all(axis=1).any():
-    st.markdown("### Carte")
-    st.map(dff[["lat", "lon"]].dropna())
-elif do_geocode and "address" in dff:
-    # geocode on the fly (simple/caché)
-    st.markdown("### Carte (géocodage à la volée)")
-    lat, lon = [], []
+    edges = np.array([s.min()-0.5, s.max()+0.5]) if s.min() == s.max() else np.linspace(s.min(), s.max(), 6)
+    cats = pd.cut(s, bins=edges, include_lowest=True, right=True)
+    counts = cats.value_counts(sort=False)  # 👈 conserve l'ordre des intervalles
+
+    labels = [f"{int(edges[i]):,} – {int(edges[i+1]):,} €".replace(",", " ")
+              for i in range(len(edges)-1)]
+
+    chart_df = pd.DataFrame({
+        "Intervalle": pd.Categorical(labels, categories=labels, ordered=True),
+        "Nombre": counts.values
+    })
+
+    # Affichage (ordre forcé)
+    chart = alt.Chart(chart_df).mark_bar().encode(
+        x=alt.X("Intervalle:N", sort=labels),
+        y="Nombre:Q",
+        tooltip=["Intervalle", "Nombre"]
+    ).properties(height=300)
+    st.altair_chart(chart, use_container_width=True)
+
+    # Si tu préfères st.bar_chart :
+    # st.bar_chart(chart_df.set_index("Intervalle")["Nombre"])
+
+
+
+# -------------------- CARTE --------------------
+import pydeck as pdk
+
+# 0) Colonnes coordonnées toujours présentes et numériques
+dff["lat"] = pd.to_numeric(dff.get("lat", pd.Series(pd.NA, index=dff.index)), errors="coerce")
+dff["lon"] = pd.to_numeric(dff.get("lon", pd.Series(pd.NA, index=dff.index)), errors="coerce")
+
+def _try_show_map(df):
+    has_coords = df[["lat", "lon"]].notna().all(axis=1)
+    if not has_coords.any():
+        return False
+
+    map_df = df.loc[has_coords, ["lat", "lon", "address", "price_eur", "url"]].copy()
+    map_df["price_eur"] = pd.to_numeric(map_df["price_eur"], errors="coerce")
+
+    # Taille des points ~ prix
+    r_min, r_max = 25, 150
+    pmin, pmax = map_df["price_eur"].min(), map_df["price_eur"].max()
+    map_df["radius"] = (r_min + r_max)/2 if pmin == pmax else r_min + (map_df["price_eur"]-pmin)*(r_max-r_min)/(pmax-pmin)
+
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=map_df,
+        get_position='[lon, lat]',
+        get_radius="radius",
+        get_color=[255, 99, 71],
+        pickable=True,
+    )
+
+    view_state = pdk.ViewState(
+        latitude=float(map_df["lat"].mean()),
+        longitude=float(map_df["lon"].mean()),
+        zoom=11, pitch=0, bearing=0
+    )
+
+    # Fond CARTO (pas de token nécessaire) + infobulle claire
+    deck = pdk.Deck(
+        layers=[layer],
+        initial_view_state=view_state,
+        map_provider="carto",
+        map_style="light",
+        tooltip={
+            "html": (
+                "<b>Adresse :</b> {address}<br/>"
+                "<b>Prix :</b> {price_eur} €<br/>"
+                "<a href='{url}' target='_blank'>Annonce</a>"
+            ),
+            "style": {
+                "backgroundColor": "#f9f9f9",
+                "color": "#333333",
+                "fontSize": "13px",
+                "border": "1px solid #cccccc",
+                "borderRadius": "6px",
+                "padding": "6px 8px",
+                "boxShadow": "0px 2px 6px rgba(0,0,0,0.15)"
+            },
+        },
+    )
+
+    st.markdown("### 🗺️ Carte")
+    st.pydeck_chart(deck, use_container_width=True)
+    return True
+
+
+# On force : pas de géocodage automatique
+do_geocode = False
+
+# A) 1er essai d'affichage avec les coordonnées déjà présentes
+shown = _try_show_map(dff)
+
+# B) Si rien à afficher, on complète d'abord par le code postal Paris, puis on réessaie
+if not shown and "postal_code" in dff.columns:
+    missing = dff["lat"].isna() | dff["lon"].isna()
+    for idx, cp in dff.loc[missing, "postal_code"].astype(str).items():
+        cp = cp.strip()
+        if cp in PARIS_ARR_COORDS:
+            y, x = PARIS_ARR_COORDS[cp]
+            dff.at[idx, "lat"] = y
+            dff.at[idx, "lon"] = x
+    shown = _try_show_map(dff)
+
+# C) Optionnel : géocoder → jamais exécuté (do_geocode = False)
+if not shown and do_geocode and "address" in dff:
+    st.caption("Géocodage en cours (Nominatim)…")
+    lat_new, lon_new = [], []
     for addr in dff["address"].fillna(""):
-        y, x = geocode_address(addr)  # (lat, lon)
-        lat.append(y); lon.append(x)
-    dff["_lat"], dff["_lon"] = lat, lon
+        y, x = geocode_address(addr)
+        lat_new.append(y); lon_new.append(x)
+    dff.loc[dff["lat"].isna(), "lat"] = pd.Series(lat_new, index=dff.index)[dff["lat"].isna()]
+    dff.loc[dff["lon"].isna(), "lon"] = pd.Series(lon_new, index=dff.index)[dff["lon"].isna()]
+    shown = _try_show_map(dff)
 
-    # Column renaming here
-    dff = dff.rename(columns={'_lat': 'latitude', '_lon': 'longitude'})
-
-    # Call st.map with the renamed columns
-    st.map(dff[["latitude", "longitude"]].dropna())
-    dff = dff.drop(columns=["latitude", "longitude"], errors="ignore")
-    
-    #st.map(dff[["_lat", "_lon"]].dropna())
-    #dff = dff.drop(columns=["_lat", "_lon"], errors="ignore")
+# ------------------ FIN CARTE ------------------
 
 # Tableau
-st.markdown("### Données filtrées")
+st.markdown("### 📋 Données filtrées")
 # Configuration des colonnes (URL cliquable si possible)
 col_config = {}
 if "url" in dff.columns:
