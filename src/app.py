@@ -1,13 +1,17 @@
 # app.py
 import re
 from functools import lru_cache
-
+import os
 import pandas as pd
 import streamlit as st
 import csv
 import io
 import requests
 import numpy as np
+
+from datetime import datetime
+from email.utils import parsedate_to_datetime
+
 
 # ---------- CONFIG ----------
 st.set_page_config(page_title="Immo Dashboard", layout="wide")
@@ -26,6 +30,77 @@ PARIS_ARR_COORDS = {
 }
 
 # ---------- UTILS ----------
+
+@st.cache_data(ttl=600)
+def get_csv_last_modified(url: str) -> datetime | None:
+    """Renvoie la date locale du dernier commit qui a modifié le fichier pointé
+    par une URL GitHub (raw ou blob). Ne plante pas si st.secrets est absent."""
+    def to_local(dt: datetime) -> datetime:
+        try:
+            from zoneinfo import ZoneInfo
+            return dt.astimezone(ZoneInfo("Europe/Paris"))
+        except Exception:
+            return dt.astimezone()
+
+    def parse_github(u: str):
+        # -> (owner, repo, branch, path) ou None
+        if "raw.githubusercontent.com" in u:
+            parts = u.split("raw.githubusercontent.com/")[-1].split("/")
+            owner, repo = parts[0], parts[1]
+            if len(parts) >= 5 and parts[2] == "refs" and parts[3] == "heads":
+                branch = parts[4]
+                path = "/".join(parts[5:])
+            else:
+                branch = parts[2]
+                path = "/".join(parts[3:])
+            return owner, repo, branch, path
+        if "github.com" in u and "/blob/" in u:
+            tail = u.split("github.com/")[-1]
+            owner, repo, _, branch, *pp = tail.split("/")
+            path = "/".join(pp)
+            return owner, repo, branch, path
+        return None
+
+    parsed = parse_github(url)
+    if not parsed:
+        # URL non GitHub : dernier recours = en-tête Last-Modified (souvent absent)
+        try:
+            r = requests.head(url, timeout=10, allow_redirects=True,
+                              headers={"User-Agent": "immo-dashboard"})
+            lm = r.headers.get("Last-Modified") or r.headers.get("last-modified")
+            if lm:
+                from email.utils import parsedate_to_datetime
+                return to_local(parsedate_to_datetime(lm))
+        except Exception:
+            pass
+        return None
+
+    owner, repo, branch, path = parsed
+    api = "https://api.github.com/repos/{}/{}/commits".format(owner, repo)
+    params = {"path": path, "sha": branch, "per_page": 1}
+    headers = {"Accept": "application/vnd.github+json", "User-Agent": "immo-dashboard"}
+
+    # 🔐 Token optionnel : d'abord variable d'env, sinon secrets si dispo
+    token = os.getenv("GITHUB_TOKEN")
+    if not token:
+        try:
+            token = st.secrets.get("GITHUB_TOKEN", None)  # ne plante pas si secrets absent
+        except Exception:
+            token = None
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+
+    try:
+        r = requests.get(api, params=params, headers=headers, timeout=15)
+        if r.ok and r.json():
+            iso = r.json()[0]["commit"]["committer"]["date"]  # "YYYY-MM-DDTHH:MM:SSZ"
+            dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+            return to_local(dt)
+    except Exception:
+        pass
+    return None
+
+
 @st.cache_data(show_spinner=True, ttl=600)
 def load_csv(url: str) -> pd.DataFrame:
     # Convertir URL GitHub "blob" -> "raw"
@@ -174,6 +249,7 @@ csv_url = st.sidebar.text_input("URL CSV (GitHub raw)", value=DEFAULT_CSV_URL, h
 
 df = load_csv(csv_url)
 
+
 st.sidebar.markdown("### Filtres")
 price_eur_min, price_eur_max = (
     int(df["price_eur"].min()) if "price_eur" in df and df["price_eur"].notna().any() else 0,
@@ -187,14 +263,22 @@ surface_m2_min, surface_m2_max = (
 def fmt_fr(n): return f"{int(n):,}".replace(",", " ")
 
 step = int(max(1000, (price_eur_max - price_eur_min)//100 or 1))
-options = list(range(price_eur_min, price_eur_max + step, step))
+options = [price_eur_min]
+cur = price_eur_min + step
+while cur < price_eur_max:
+    options.append(cur)
+    cur += step
+options.append(price_eur_max)  # dernier = vrai max
 
 price_eur_sel = st.sidebar.select_slider(
     "Prix (€)",
     options=options,
     value=(options[0], options[-1]),
     format_func=lambda x: f"{fmt_fr(x)} €",
+    key=f"price_{options[0]}_{options[-1]}",
 )
+
+
 surface_m2_sel = st.sidebar.slider("Surface (m²)", min_value=surface_m2_min, max_value=surface_m2_max,
                                 value=(surface_m2_min, surface_m2_max), step=1)
 
@@ -223,17 +307,24 @@ st.markdown(
     unsafe_allow_html=True
 )
 
+# --- juste avant le header ---
+last_dt  = get_csv_last_modified(csv_url)               # ta fonction déjà définie
+last_txt = last_dt.strftime("%d/%m/%Y %H:%M") if last_dt else "indisponible"
+
+# --- header avec Source + Date sur UNE seule ligne ---
 st.markdown(
-    """
+    f"""
     <h1 style='text-align:left; font-size:38px; color:#2C3E50;'>
         🏠 Tableau de bord immobilier - Paris
     </h1>
     <p style='text-align:left; font-size:16px; color:gray; margin-top:-10px;'>
-        (Source : seloger.com)
+        (Source : seloger.com&nbsp;•&nbsp;🗓️ Données mises à jour : {last_txt})
     </p>
     """,
     unsafe_allow_html=True
 )
+
+
 
 # KPIs en haut
 left, mid, right = st.columns(3)
@@ -271,22 +362,37 @@ if {"price_eur", "surface_m2"}.issubset(dff.columns) and len(dff):
 import numpy as np
 import altair as alt
 
-# Histogramme des prix (5 classes régulières, ordre garanti)
 if "price_eur" in dff and dff["price_eur"].notna().any():
     st.markdown("### 📈 Histogramme des prix (5 classes)")
-    s = dff["price_eur"].dropna()
+    s = pd.to_numeric(dff["price_eur"], errors="coerce").dropna()
+    if len(s) == 0:
+        st.info("Pas de prix exploitables pour l’histogramme.")
+    else:
+        lo, hi = float(s.min()), float(s.max())
+        if np.isclose(lo, hi):
+            edges = np.array([lo - 0.5, hi + 0.5])  # un seul bin visuel
+        else:
+            edges = np.linspace(lo, hi, 6)          # 5 classes
 
-    edges = np.array([s.min()-0.5, s.max()+0.5]) if s.min() == s.max() else np.linspace(s.min(), s.max(), 6)
-    cats = pd.cut(s, bins=edges, include_lowest=True, right=True)
-    counts = cats.value_counts(sort=False)  # 👈 conserve l'ordre des intervalles
+        cats = pd.cut(s, bins=edges, include_lowest=True, right=True)
+        counts = cats.value_counts(sort=False)
 
-    labels = [f"{int(edges[i]):,} – {int(edges[i+1]):,} €".replace(",", " ")
-              for i in range(len(edges)-1)]
+        labels = [f"{int(edges[i]):,} – {int(edges[i+1]):,} €".replace(",", " ")
+                  for i in range(len(edges)-1)]
 
-    chart_df = pd.DataFrame({
-        "Intervalle": pd.Categorical(labels, categories=labels, ordered=True),
-        "Nombre": counts.values
-    })
+        chart_df = pd.DataFrame({
+            "Intervalle": pd.Categorical(labels, categories=labels, ordered=True),
+            "Nombre": counts.values
+        })
+
+        chart = alt.Chart(chart_df).mark_bar().encode(
+            x=alt.X("Intervalle:N", sort=labels, axis=alt.Axis(labelAngle=0, labelLimit=140)),
+            y=alt.Y("Nombre:Q", axis=alt.Axis(title=None)),
+            tooltip=["Intervalle", "Nombre"]
+        ).properties(height=320)
+
+        st.altair_chart(chart, use_container_width=True)
+
 
     # Affichage (ordre forcé)
     chart = alt.Chart(chart_df).mark_bar().encode(
@@ -294,7 +400,7 @@ if "price_eur" in dff and dff["price_eur"].notna().any():
         y="Nombre:Q",
         tooltip=["Intervalle", "Nombre"]
     ).properties(height=300)
-    st.altair_chart(chart, use_container_width=True)
+
 
     # Si tu préfères st.bar_chart :
     # st.bar_chart(chart_df.set_index("Intervalle")["Nombre"])
