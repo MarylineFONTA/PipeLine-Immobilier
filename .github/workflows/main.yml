@@ -40,7 +40,6 @@ jobs:
         if: ${{ hashFiles('src/app.py') != '' }}
         run: |
           # adapte ces chemins/commandes à ton repo
-          python src/get_links_scrapy_nojs.py || true
           python src/spider.py
           python src/cleaner.py
 
