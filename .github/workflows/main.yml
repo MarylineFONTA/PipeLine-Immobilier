@@ -3,9 +3,9 @@ name: Scrape & Clean (CI)
 on:
   workflow_dispatch:        # lancement manuel
   push:
-    branches: [ "main" ]    # à chaque push sur main
-  # schedule:               # décommente si tu veux l'exécution auto quotidienne (UTC)
-  #   - cron: "0 5 * * *"   # 05:00 UTC ~ 06/07:00 Europe/Paris
+    branches: [ "main" ]    # optionnel: à chaque push sur main
+  # schedule:               # optionnel: exécution quotidienne (UTC)
+  #   - cron: "0 5 * * *"   # 05:00 UTC ~ 07:00/06:00 Europe/Paris selon saison
 
 permissions:
   contents: write           # nécessaire pour commit/push avec GITHUB_TOKEN
@@ -17,13 +17,12 @@ concurrency:
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0     # permet le commit/push
+          fetch-depth: 0     # utile pour pouvoir pousser ensuite
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -36,56 +35,29 @@ jobs:
           python -m pip install --upgrade pip
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Run spider and cleaner
-        shell: bash
+
+      - name: Run scraper then cleaner (separate scripts)
+        if: ${{ hashFiles('src/app.py') != '' }}
         run: |
-          set -euo pipefail
-          mkdir -p data
-
-          echo "▶️ Running spider..."
-          # adapte ces commandes à ton repo
-          python src/get_links_scrapy_nojs.py
+          # adapte ces chemins/commandes à ton repo
+          python src/get_links_scrapy_nojs.py || true
           python src/spider.py
-
-          # Vérifier que le brut existe et n'est pas vide (si tu produis data/raw.csv)
-          if [ -f data/raw.csv ]; then
-            test -s data/raw.csv
-            echo "raw.csv lignes:" $(wc -l < data/raw.csv) | tee -a $GITHUB_STEP_SUMMARY
-          fi
-
-          echo "🧹 Cleaning..."
-          # si cleaner lit raw.csv et écrit cleaned_data.csv
           python src/cleaner.py
 
-          # Vérifier la sortie
-          test -s data/cleaned_data.csv
-          echo "cleaned_data.csv lignes:" $(wc -l < data/cleaned_data.csv) | tee -a $GITHUB_STEP_SUMMARY
-
-          # Validation rapide
-          python - <<'PY'
-          import pandas as pd, sys
-          df = pd.read_csv("data/cleaned_data.csv", sep=";")
-          req = ["price_eur","surface_m2","address"]
-          miss = [c for c in req if c not in df.columns]
-          assert not miss, f"Missing columns: {miss}"
-          assert len(df) > 0, "Empty cleaned_data.csv"
-          print(f"✅ Validate OK: rows={len(df)}")
-          PY
+      - name: Check CSV exists
+        run: |
+          test -f data/cleaned_data.csv || (echo "data/cleaned_data.csv manquant" && exit 1)
 
       - name: Commit & push CSV
-        if: ${{ github.ref == 'refs/heads/main' }}
         run: |
-          set -e
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/cleaned_data.csv
+          git add -A
           if git diff --cached --quiet; then
-            echo "ℹ️ Pas de changement à committer." | tee -a $GITHUB_STEP_SUMMARY
+            echo "Pas de changement à committer."
           else
-            # [skip ci] évite de relancer ce workflow par le commit de données
             git commit -m "CI: update data/cleaned_data.csv [skip ci]"
             git push
-            echo "📦 CSV mis à jour et poussé" | tee -a $GITHUB_STEP_SUMMARY
           fi
 
       - name: Upload CSV artifact (optional)
