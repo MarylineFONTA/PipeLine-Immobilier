@@ -247,6 +247,10 @@ def geocode_address(addr: str) -> tuple[float | None, float | None]:
 st.sidebar.header("Paramètres")
 csv_url = st.sidebar.text_input("URL CSV (GitHub raw)", value=DEFAULT_CSV_URL, help="https://github.com/MarylineFONTA/PipeLine-Immobilier/blob/main/data/cleaned_data.csv")
 
+if st.sidebar.button("↻ Recharger les données"):
+    load_csv.clear()   # vide le cache
+    st.rerun()
+    
 df = load_csv(csv_url)
 
 
