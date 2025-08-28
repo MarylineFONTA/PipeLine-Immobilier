@@ -116,7 +116,8 @@ class SeLogerSelectorsTP(scrapy.Spider):
         "CONCURRENT_REQUESTS": 1,
         "RETRY_ENABLED": True,
         "RETRY_TIMES": 1,
-        "USER_AGENT": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
+        "USER_AGENT" : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        #"USER_AGENT": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36",
     }
 
     def __init__(self, *args, **kwargs):
