@@ -120,7 +120,7 @@ def main() -> None:
     existing = [c for c in ordered_cols if c in df.columns]
     df = df[existing]
 
-    # Nettoyage des colonnes texte pour garantir 10 lignes physiques si 10 annonces
+    # Nettoyage des colonnes texte
     df = sanitize_strings(df, sep=";")
 
     # Stat globale (optionnel)
